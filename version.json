@@ -1,4 +1,4 @@
 {
-  "version": "1.3.0",
-  "notes": "Graph changed to overlapping pillar chart"
+  "version": "1.4.0",
+  "notes": "Grouped side-by-side bars, rounded tops, refreshed colors"
 }
