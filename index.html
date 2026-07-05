@@ -167,7 +167,8 @@
         <button class="navbtn" id="cnext">›</button>
       </div>
       <div class="toggle">
-        <button class="tbtn on" id="tmonth">Month</button>
+        <button class="tbtn on" id="tweek">Week</button>
+        <button class="tbtn" id="tmonth">Month</button>
         <button class="tbtn" id="tyear">Year</button>
       </div>
     </div>
@@ -353,13 +354,16 @@ function arcPath(cx,cy,r,a1,a2,color,w,rounded){
 }
 
 // ---------- chart ----------
-let chartMode='month';
-let chartMonth=viewDate.slice(0,7);            // 'YYYY-MM'
-let chartYear=parseInt(viewDate.slice(0,4));   // 2026
+let chartMode='week';
+let chartWeekStart=mondayOf(viewDate);        // ISO date of Monday
+let chartMonth=viewDate.slice(0,7);           // 'YYYY-MM'
+let chartYear=parseInt(viewDate.slice(0,4));
 
+function mondayOf(ds){ const d=new Date(ds+'T12:00:00'); const off=(d.getDay()+6)%7; d.setDate(d.getDate()-off); return iso(d); }
 function daysInMonth(ym){ const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
 function shiftMonth(ym,n){ const [y,m]=ym.split('-').map(Number); const d=new Date(y,m-1+n,1);
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function pillarVal(ds,key){ return days[ds]?days[ds][key]:null; }
 
 function renderChart(){
   const svg=document.getElementById('chart');
@@ -367,73 +371,86 @@ function renderChart(){
   const W=420,H=200, padL=26,padR=8,padT=12,padB=22;
   const plotW=W-padL-padR, plotH=H-padT-padB;
   let out='';
-
   let series, xLabels, yMax;
-  if(chartMode==='month'){
-    const n=daysInMonth(chartMonth);
+
+  if(chartMode==='week'){
+    // 7 days, values 0-3
     yMax=3;
-    series=PILLARS.map(p=>Array.from({length:n},(_,i)=>{
-      const ds=chartMonth+'-'+String(i+1).padStart(2,'0');
-      return days[ds] ? days[ds][p.key] : null;   // null = not logged
+    const dnames=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    series=PILLARS.map(p=>Array.from({length:7},(_,i)=>pillarVal(shiftDate(chartWeekStart,i),p.key)));
+    xLabels=dnames.map((d,i)=>[i,d]);
+    const endD=shiftDate(chartWeekStart,6);
+    const f=ds=>new Date(ds+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+    label.textContent=f(chartWeekStart)+' – '+f(endD);
+
+  }else if(chartMode==='month'){
+    // weeks of the month, weekly sums per pillar
+    const nD=daysInMonth(chartMonth);
+    const nW=Math.ceil(nD/7);
+    series=PILLARS.map(p=>Array.from({length:nW},(_,w)=>{
+      let sum=0, any=false;
+      for(let d=w*7+1; d<=Math.min((w+1)*7,nD); d++){
+        const v=pillarVal(chartMonth+'-'+String(d).padStart(2,'0'),p.key);
+        if(v!==null){ sum+=v; any=true; }
+      }
+      return any?sum:null;
     }));
-    xLabels=[[0,'1'],[Math.floor(n/2),String(Math.floor(n/2)+1)],[n-1,String(n)]];
+    const flat=series.flat().filter(v=>v!==null);
+    yMax=Math.max(6, ...(flat.length?flat:[6]));
+    xLabels=Array.from({length:nW},(_,w)=>[w,'W'+(w+1)]);
     const [y,m]=chartMonth.split('-').map(Number);
     label.textContent=new Date(y,m-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'});
+
   }else{
-    yMax=93; // theoretical monthly max (31 × 3)
+    // 12 months, monthly sums per pillar
     series=PILLARS.map(p=>Array.from({length:12},(_,mi)=>{
       const ym=chartYear+'-'+String(mi+1).padStart(2,'0');
       let sum=0, any=false;
       for(let d=1; d<=daysInMonth(ym); d++){
-        const ds=ym+'-'+String(d).padStart(2,'0');
-        if(days[ds]){ sum+=days[ds][p.key]; any=true; }
+        const v=pillarVal(ym+'-'+String(d).padStart(2,'0'),p.key);
+        if(v!==null){ sum+=v; any=true; }
       }
       return any?sum:null;
     }));
-    // scale yMax to data so lines aren't flat
     const flat=series.flat().filter(v=>v!==null);
     yMax=Math.max(10, ...(flat.length?flat:[10]));
-    xLabels=[[0,'Jan'],[3,'Apr'],[6,'Jul'],[9,'Oct'],[11,'Dec']];
+    xLabels=[[0,'Jan'],[1,'Feb'],[2,'Mar'],[3,'Apr'],[4,'May'],[5,'Jun'],[6,'Jul'],[7,'Aug'],[8,'Sep'],[9,'Oct'],[10,'Nov'],[11,'Dec']];
     label.textContent=String(chartYear);
   }
 
   const n=series[0].length;
-  const x=i=> padL + (n===1?plotW/2 : i*(plotW/(n-1)));
+  const slotW=plotW/n;
+  const xc=i=> padL + slotW*(i+0.5);          // slot centers
   const y=v=> padT + plotH - (v/yMax)*plotH;
 
-  // gridlines
-  const gridVals = chartMode==='month' ? [0,1,2,3] : [0, Math.round(yMax/2), yMax];
+  // grid
+  const gridVals = chartMode==='week' ? [0,1,2,3] : [0, Math.round(yMax/2), yMax];
   gridVals.forEach(g=>{
     out+='<line x1="'+padL+'" y1="'+y(g)+'" x2="'+(W-padR)+'" y2="'+y(g)+'" stroke="var(--line)" stroke-width="1"/>';
     out+='<text x="'+(padL-6)+'" y="'+(y(g)+3)+'" fill="var(--muted)" font-size="9" text-anchor="end" font-family="Sora">'+g+'</text>';
   });
   xLabels.forEach(([i,t])=>{
-    out+='<text x="'+x(i)+'" y="'+(H-6)+'" fill="var(--muted)" font-size="9" text-anchor="middle" font-family="Sora">'+t+'</text>';
+    out+='<text x="'+xc(i)+'" y="'+(H-6)+'" fill="var(--muted)" font-size="9" text-anchor="middle" font-family="Sora">'+t+'</text>';
   });
 
-  // grouped bars: 4 thin pillars side by side per slot, rounded tops
-  const slotW = plotW/n;
-  const groupW = slotW*0.78;
-  const gapW = groupW*0.10;
-  const barW = (groupW - 3*gapW)/4;
-  const bottom = padT+plotH;
+  // grouped bars, rounded tops
+  const groupW=slotW*0.72;
+  const gapW=groupW*0.10;
+  const barW=(groupW-3*gapW)/4;
+  const bottom=padT+plotH;
   function topRoundedBar(bx,by,w,h,color){
-    const r=Math.min(w*0.45, h);
-    return '<path d="M '+bx+' '+(by+h)+
-      ' L '+bx+' '+(by+r)+
-      ' Q '+bx+' '+by+' '+(bx+r)+' '+by+
-      ' L '+(bx+w-r)+' '+by+
-      ' Q '+(bx+w)+' '+by+' '+(bx+w)+' '+(by+r)+
-      ' L '+(bx+w)+' '+(by+h)+' Z" fill="'+color+'"/>';
+    const r=Math.min(w*0.45,h);
+    return '<path d="M '+bx+' '+(by+h)+' L '+bx+' '+(by+r)+' Q '+bx+' '+by+' '+(bx+r)+' '+by+
+      ' L '+(bx+w-r)+' '+by+' Q '+(bx+w)+' '+by+' '+(bx+w)+' '+(by+r)+' L '+(bx+w)+' '+(by+h)+' Z" fill="'+color+'"/>';
   }
-  for(let i=0; i<n; i++){
-    const gx = x(i)-groupW/2;
+  for(let i=0;i<n;i++){
+    const gx=xc(i)-groupW/2;
     series.forEach((vals,si)=>{
       const v=vals[i];
-      if(v===null || v<=0) return;
-      const bx = gx + si*(barW+gapW);
-      const by = y(v), bh = bottom-by;
-      out+=topRoundedBar(bx,by,barW,bh,PILLARS[si].hex);
+      if(v===null||v<=0) return;
+      const bx=gx+si*(barW+gapW);
+      const by=y(v);
+      out+=topRoundedBar(bx,by,barW,bottom-by,PILLARS[si].hex);
     });
   }
 
@@ -442,24 +459,26 @@ function renderChart(){
     '<div class="cleg"><span class="dot" style="background:'+p.hex+'"></span>'+p.name+'</div>').join('');
 }
 
+function setChartMode(m){
+  chartMode=m;
+  ['tweek','tmonth','tyear'].forEach(id=>document.getElementById(id).classList.remove('on'));
+  document.getElementById('t'+m).classList.add('on');
+  renderChart();
+}
+document.getElementById('tweek').onclick =()=>setChartMode('week');
+document.getElementById('tmonth').onclick=()=>setChartMode('month');
+document.getElementById('tyear').onclick =()=>setChartMode('year');
+
 document.getElementById('cprev').onclick=()=>{
-  if(chartMode==='month') chartMonth=shiftMonth(chartMonth,-1); else chartYear--;
+  if(chartMode==='week') chartWeekStart=shiftDate(chartWeekStart,-7);
+  else if(chartMode==='month') chartMonth=shiftMonth(chartMonth,-1);
+  else chartYear--;
   renderChart();
 };
 document.getElementById('cnext').onclick=()=>{
-  if(chartMode==='month') chartMonth=shiftMonth(chartMonth,1); else chartYear++;
-  renderChart();
-};
-document.getElementById('tmonth').onclick=()=>{
-  chartMode='month';
-  document.getElementById('tmonth').classList.add('on');
-  document.getElementById('tyear').classList.remove('on');
-  renderChart();
-};
-document.getElementById('tyear').onclick=()=>{
-  chartMode='year';
-  document.getElementById('tyear').classList.add('on');
-  document.getElementById('tmonth').classList.remove('on');
+  if(chartMode==='week') chartWeekStart=shiftDate(chartWeekStart,7);
+  else if(chartMode==='month') chartMonth=shiftMonth(chartMonth,1);
+  else chartYear++;
   renderChart();
 };
 
@@ -468,7 +487,7 @@ document.getElementById('next').onclick=()=>{ if(viewDate!==today()){ viewDate=s
 document.getElementById('note').addEventListener('input', e=>setNote(e.target.value));
 
 // ================= CLOUD SYNC + ACCOUNTS + UPDATES =================
-const APP_VERSION='1.4.0';
+const APP_VERSION='1.5.0';
 document.getElementById('verNum').textContent=APP_VERSION;
 
 const DEFAULT_CONFIG={
